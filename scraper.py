@@ -9,9 +9,13 @@ from datetime import datetime, timezone
 import urllib.parse
 from models import Fact, CompanyProfile
 
+class FactExtraction(BaseModel):
+    value: str
+    source_url: str
+
 class WebsiteFacts(BaseModel):
-    mission_statement: str | None = None
-    company_description: str | None = None
+    mission_statement: FactExtraction | None = None
+    company_description: FactExtraction | None = None
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -41,10 +45,10 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
                 print(f"Website fetch failed for {profile.orgnr}")
                 return profile
             
-            texts = [soup.get_text(separator=' ', strip=True)]
+            # Keep text AND url together for proper provenance
+            texts = [f"--- URL: {url} ---\n{soup.get_text(separator=' ', strip=True)}"]
             
-            # Simple link discovery for about/team/etc.
-            keywords = ['about', 'team', 'leadership', 'om', 'ledelse', 'kontakt']
+            keywords = ['about', 'team', 'leadership', 'om', 'ledelse', 'kontakt', 'about-us']
             links_to_fetch = []
             for a in soup.find_all('a', href=True):
                 href = a['href']
@@ -59,11 +63,22 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
             for l in links_to_fetch:
                 sub_soup = await fetch_page(http_client, l)
                 if sub_soup:
-                    texts.append(sub_soup.get_text(separator=' ', strip=True))
+                    texts.append(f"--- URL: {l} ---\n{sub_soup.get_text(separator=' ', strip=True)}")
                     
-            combined_text = " ".join(texts)[:4000]
+            combined_text = "\n\n".join(texts)[:8000] # Give the LLM more context
             
-            prompt = f"Extract the mission statement and company description from this Norwegian company website text. Do NOT invent information.\nText: {combined_text}"
+            prompt = f"""
+            You are analyzing text extracted from various pages of a Norwegian company's website.
+            Each section begins with "--- URL: <url> ---".
+            
+            Extract the company's mission statement and a general company description.
+            For each fact you extract, you MUST provide the exact `source_url` from the section where you found the information.
+            
+            Do NOT invent information. If it is not present, leave it null.
+            
+            Text: 
+            {combined_text}
+            """
             
             max_retries = 3
             for attempt in range(max_retries):
@@ -81,14 +96,19 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
                     result = WebsiteFacts.model_validate_json(res.text)
                     timestamp = datetime.now(timezone.utc)
                     
-                    def create_fact(value) -> Fact:
-                        return Fact(value=value, source_url=url, fetched_at=timestamp)
-                    
-                    if result.mission_statement:
-                        profile.facts["mission_statement"] = create_fact(result.mission_statement)
+                    if result.mission_statement and result.mission_statement.value:
+                        profile.facts["mission_statement"] = Fact(
+                            value=result.mission_statement.value,
+                            source_url=result.mission_statement.source_url,
+                            fetched_at=timestamp
+                        )
                         
-                    if result.company_description:
-                        profile.facts["company_description"] = create_fact(result.company_description)
+                    if result.company_description and result.company_description.value:
+                        profile.facts["company_description"] = Fact(
+                            value=result.company_description.value,
+                            source_url=result.company_description.source_url,
+                            fetched_at=timestamp
+                        )
                         
                     break 
                     

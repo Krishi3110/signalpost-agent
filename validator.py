@@ -6,6 +6,13 @@ def validate_dataset(filepath="submission_profiles.jsonl"):
     valid_count = 0
     orgnrs = set()
     errors = []
+    
+    coverage = {
+        "revenue": 0,
+        "executive_team": 0,
+        "mission_statement": 0,
+        "company_description": 0
+    }
 
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -32,6 +39,11 @@ def validate_dataset(filepath="submission_profiles.jsonl"):
                     if "source_url" not in fact_data or "fetched_at" not in fact_data:
                         errors.append(f"Line {line_num}: Fact '{fact_key}' missing provenance")
 
+                if "revenue" in facts: coverage["revenue"] += 1
+                if "executive_team" in facts: coverage["executive_team"] += 1
+                if "mission_statement" in facts: coverage["mission_statement"] += 1
+                if "company_description" in facts: coverage["company_description"] += 1
+
                 valid_count += 1
                 
     except FileNotFoundError:
@@ -44,15 +56,21 @@ def validate_dataset(filepath="submission_profiles.jsonl"):
     
     if errors:
         print(f"Found {len(errors)} errors:")
-        for e in errors[:10]: # Print first 10 errors
+        for e in errors[:10]:
             print(f"  - {e}")
     else:
-        print("Dataset is PERFECT. 0 schema errors.")
+        print(f"Dataset validation passed. {valid_count} valid organizations. 0 schema/provenance errors.")
+        
+    print("\nCoverage Report:")
+    print(f"  revenue: {coverage['revenue']}/{valid_count}")
+    print(f"  executive_team: {coverage['executive_team']}/{valid_count}")
+    print(f"  mission_statement: {coverage['mission_statement']}/{valid_count}")
+    print(f"  company_description: {coverage['company_description']}/{valid_count}")
         
     if valid_count >= 1000 and len(errors) == 0:
-        print("READY FOR SUBMISSION! 🚀")
+        print("\nREADY FOR SUBMISSION! 🚀")
     else:
-        print("Criteria NOT met. Do not submit yet.")
+        print("\nCriteria NOT met. Do not submit yet.")
 
 if __name__ == "__main__":
     validate_dataset()
