@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 import os
 import asyncio
 from datetime import datetime, timezone
-import urllib.parse
+from urllib.parse import urlparse, urljoin
 from models import Fact, CompanyProfile
 
 class FactExtraction(BaseModel):
@@ -19,53 +19,64 @@ class WebsiteFacts(BaseModel):
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-async def fetch_page(http_client, url):
+async def fetch_page(http_client, url, headers):
     try:
-        response = await http_client.get(url)
+        response = await http_client.get(url, headers=headers)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, "html.parser")
-            for element in soup(["script", "style", "footer", "nav", "header"]):
-                element.decompose()
             return soup
     except Exception:
         pass
     return None
+
+def clean_soup_text(soup):
+    for element in soup(["script", "style", "footer", "nav", "header"]):
+        element.decompose()
+    return soup.get_text(separator=' ', strip=True)
 
 async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
     if "website" not in profile.facts:
         return profile
         
     url = profile.facts["website"].value
+    base_domain = urlparse(url).netloc.lower()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
     async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as http_client:
         try:
-            soup = await fetch_page(http_client, url)
+            soup = await fetch_page(http_client, url, headers)
             if not soup:
                 print(f"Website fetch failed for {profile.orgnr}")
                 return profile
             
-            # Keep text AND url together for proper provenance
-            texts = [f"--- URL: {url} ---\n{soup.get_text(separator=' ', strip=True)}"]
-            
             keywords = ['about', 'team', 'leadership', 'om', 'ledelse', 'kontakt', 'about-us']
             links_to_fetch = []
+            
+            # Discover links BEFORE cleaning the soup, since nav links are highly relevant
             for a in soup.find_all('a', href=True):
                 href = a['href']
                 text = a.get_text().lower()
                 if any(k in href.lower() or k in text for k in keywords):
-                    full_url = urllib.parse.urljoin(url, href)
-                    if full_url not in links_to_fetch and full_url.startswith('http'):
-                        links_to_fetch.append(full_url)
-                        if len(links_to_fetch) >= 2:
-                            break
+                    full_url = urljoin(url, href)
+                    if full_url.startswith('http'):
+                        candidate_domain = urlparse(full_url).netloc.lower()
+                        # Enforce same-domain to avoid scraping LinkedIn/Facebook "about" links
+                        if candidate_domain == base_domain and full_url not in links_to_fetch and full_url != url:
+                            links_to_fetch.append(full_url)
+                            if len(links_to_fetch) >= 2:
+                                break
+            
+            # Now we clean the text for the LLM
+            texts = [f"--- URL: {url} ---\n{clean_soup_text(soup)}"]
                             
             for l in links_to_fetch:
-                sub_soup = await fetch_page(http_client, l)
+                sub_soup = await fetch_page(http_client, l, headers)
                 if sub_soup:
-                    texts.append(f"--- URL: {l} ---\n{sub_soup.get_text(separator=' ', strip=True)}")
+                    texts.append(f"--- URL: {l} ---\n{clean_soup_text(sub_soup)}")
                     
-            combined_text = "\n\n".join(texts)[:8000] # Give the LLM more context
+            combined_text = "\n\n".join(texts)[:8000]
+            
+            allowed_urls = {url} | set(links_to_fetch)
             
             prompt = f"""
             You are analyzing text extracted from various pages of a Norwegian company's website.
@@ -96,19 +107,24 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
                     result = WebsiteFacts.model_validate_json(res.text)
                     timestamp = datetime.now(timezone.utc)
                     
+                    # Validate that the LLM didn't hallucinate a URL
                     if result.mission_statement and result.mission_statement.value:
-                        profile.facts["mission_statement"] = Fact(
-                            value=result.mission_statement.value,
-                            source_url=result.mission_statement.source_url,
-                            fetched_at=timestamp
-                        )
+                        src_url = result.mission_statement.source_url
+                        if src_url in allowed_urls:
+                            profile.facts["mission_statement"] = Fact(
+                                value=result.mission_statement.value,
+                                source_url=src_url,
+                                fetched_at=timestamp
+                            )
                         
                     if result.company_description and result.company_description.value:
-                        profile.facts["company_description"] = Fact(
-                            value=result.company_description.value,
-                            source_url=result.company_description.source_url,
-                            fetched_at=timestamp
-                        )
+                        src_url = result.company_description.source_url
+                        if src_url in allowed_urls:
+                            profile.facts["company_description"] = Fact(
+                                value=result.company_description.value,
+                                source_url=src_url,
+                                fetched_at=timestamp
+                            )
                         
                     break 
                     
