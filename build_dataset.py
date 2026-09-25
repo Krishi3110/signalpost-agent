@@ -1,6 +1,6 @@
 import asyncio
 import httpx
-from api_gov import fetch_brreg_basic_info, fetch_brreg_financials
+from api_gov import fetch_brreg_basic_info, fetch_brreg_financials, fetch_brreg_roles
 from scraper import scrape_company_website
 
 TARGET_COUNT = 1100
@@ -22,6 +22,7 @@ async def process_single_company(orgnr: str, semaphore: asyncio.Semaphore, file_
             return
             
         profile = await fetch_brreg_financials(profile)
+        profile = await fetch_brreg_roles(profile)
         profile = await scrape_company_website(profile) 
         
         async with file_lock:
@@ -32,7 +33,8 @@ async def main():
     org_numbers = await get_target_company_ids()
     open("submission_profiles.jsonl", "w", encoding="utf-8").close()
     
-    semaphore = asyncio.Semaphore(3)
+    # Process one by one to ensure absolute stability and prevent dropped connections
+    semaphore = asyncio.Semaphore(1)
     file_lock = asyncio.Lock()
     
     print(f"Starting batch extraction. This will take several hours to respect rate limits.")

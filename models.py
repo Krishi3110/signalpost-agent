@@ -10,7 +10,7 @@ class Fact(BaseModel):
 
 class CompanyProfile(BaseModel):
     """The master template for a company profile."""
-    orgnr: str = Field(..., description="The 9-digit Norwegian company number")
+    orgnr: str = Field(..., pattern=r"^\d{9}$", description="The 9-digit Norwegian company number")
     company_name: Fact
     
     # All other facts are stored here, ensuring they follow the Fact schema

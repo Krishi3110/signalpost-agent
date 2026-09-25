@@ -6,17 +6,26 @@ from pydantic import BaseModel, Field
 import os
 import asyncio
 from datetime import datetime, timezone
+import urllib.parse
 from models import Fact, CompanyProfile
-
-class Executive(BaseModel):
-    name: str
-    title: str
 
 class WebsiteFacts(BaseModel):
     mission_statement: str | None = None
-    executive_team: list[Executive] = Field(default_factory=list)
+    company_description: str | None = None
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+async def fetch_page(http_client, url):
+    try:
+        response = await http_client.get(url)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            for element in soup(["script", "style", "footer", "nav", "header"]):
+                element.decompose()
+            return soup
+    except Exception:
+        pass
+    return None
 
 async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
     if "website" not in profile.facts:
@@ -27,18 +36,34 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
     
     async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as http_client:
         try:
-            response = await http_client.get(url, headers=headers)
-            if response.status_code != 200:
-                print(f"Website fetch failed for {profile.orgnr}: {response.status_code}")
+            soup = await fetch_page(http_client, url)
+            if not soup:
+                print(f"Website fetch failed for {profile.orgnr}")
                 return profile
             
-            soup = BeautifulSoup(response.text, "html.parser")
-            for element in soup(["script", "style", "footer", "nav", "header"]):
-                element.decompose()
-                
-            text = soup.get_text(separator=' ', strip=True)[:3000]
+            texts = [soup.get_text(separator=' ', strip=True)]
             
-            prompt = f"Extract the mission statement and executive team from this Norwegian company website text. Do NOT invent information.\nText: {text}"
+            # Simple link discovery for about/team/etc.
+            keywords = ['about', 'team', 'leadership', 'om', 'ledelse', 'kontakt']
+            links_to_fetch = []
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                text = a.get_text().lower()
+                if any(k in href.lower() or k in text for k in keywords):
+                    full_url = urllib.parse.urljoin(url, href)
+                    if full_url not in links_to_fetch and full_url.startswith('http'):
+                        links_to_fetch.append(full_url)
+                        if len(links_to_fetch) >= 2:
+                            break
+                            
+            for l in links_to_fetch:
+                sub_soup = await fetch_page(http_client, l)
+                if sub_soup:
+                    texts.append(sub_soup.get_text(separator=' ', strip=True))
+                    
+            combined_text = " ".join(texts)[:4000]
+            
+            prompt = f"Extract the mission statement and company description from this Norwegian company website text. Do NOT invent information.\nText: {combined_text}"
             
             max_retries = 3
             for attempt in range(max_retries):
@@ -62,16 +87,17 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
                     if result.mission_statement:
                         profile.facts["mission_statement"] = create_fact(result.mission_statement)
                         
-                    if result.executive_team:
-                        team_str = ", ".join([f"{ex.name} ({ex.title})" for ex in result.executive_team])
-                        profile.facts["executive_team"] = create_fact(team_str)
+                    if result.company_description:
+                        profile.facts["company_description"] = create_fact(result.company_description)
                         
                     break 
                     
                 except Exception as e:
-                    if "503" in str(e) or "429" in str(e):
+                    if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
                         if attempt < max_retries - 1:
-                            await asyncio.sleep(2 ** attempt)
+                            wait_time = 30 * (attempt + 1) 
+                            print(f"Rate limited on {profile.orgnr}. Waiting {wait_time}s...")
+                            await asyncio.sleep(wait_time)
                         else:
                             print(f"LLM Rate limit exhausted for {profile.orgnr}")
                             break

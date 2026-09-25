@@ -1,7 +1,7 @@
 import asyncio
 import argparse
 import json
-from api_gov import fetch_brreg_basic_info, fetch_brreg_financials
+from api_gov import fetch_brreg_basic_info, fetch_brreg_financials, fetch_brreg_roles
 from scraper import scrape_company_website
 
 async def process_company(orgnr: str, output_file: str):
@@ -10,6 +10,7 @@ async def process_company(orgnr: str, output_file: str):
         return
     
     profile = await fetch_brreg_financials(profile)
+    profile = await fetch_brreg_roles(profile)
     profile = await scrape_company_website(profile) 
     
     with open(output_file, "a", encoding="utf-8") as f:

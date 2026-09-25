@@ -1,11 +1,25 @@
-# Signalpost Data Extraction Agent
+# SignalPost Agent
 
-An autonomous agent designed to extract determinist Norwegian corporate records from Brønnøysundregistrene (Enhetsregisteret and Regnskapsregisteret), augmented with unstructured facts extracted from official company websites via Gemini 3.8 Flash.
+## Architecture
+BRREG → Financials → Roles → Website → Gemini → Pydantic
 
-## Execution
-The agent accepts a JSON array of organization numbers and outputs structured Pydantic profiles to a JSONL file.
+## Setup
+Ensure Python 3.11+ is installed, then install the dependencies:
+```bash
+pip install -r requirements.txt
+```
 
+## Run
 ```bash
 docker build -t signalpost-agent .
 docker run --rm -v "$(pwd)/test_input.json:/app/test_input.json" --env GEMINI_API_KEY="your_key" signalpost-agent --input /app/test_input.json --output /app/results.jsonl
 ```
+
+## Input
+A JSON array of 9-digit Norwegian organization numbers.
+
+## Output
+A JSONL file containing complete, deterministic, and LLM-augmented company profiles conforming strictly to Pydantic schemas.
+
+## Data sources
+BRREG (Enhetsregisteret, Regnskapsregisteret, and Roller APIs) + official company websites.
