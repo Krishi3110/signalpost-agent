@@ -50,6 +50,28 @@ async def fetch_brreg_basic_info(orgnr: str) -> CompanyProfile | None:
             if "antallAnsatte" in data:
                 profile.facts["employee_count"] = create_fact(data["antallAnsatte"])
                 
+            # --- NEW DETERMINISTIC FIELDS ---
+            if "postadresse" in data:
+                addr = data["postadresse"]
+                address_str = f"{', '.join(addr.get('adresse', []))}, {addr.get('postnummer', '')} {addr.get('poststed', '')}".strip(', ')
+                if address_str and address_str != ",":
+                    profile.facts["postal_address"] = create_fact(address_str)
+                    
+            if "registrertIMvaregisteret" in data:
+                profile.facts["vat_registered"] = create_fact(data["registrertIMvaregisteret"])
+                
+            if "naeringskode1" in data:
+                profile.facts["nace_code"] = create_fact(data["naeringskode1"].get("kode"))
+                profile.facts["nace_description"] = create_fact(data["naeringskode1"].get("beskrivelse"))
+                
+            # Aggregate company status flags
+            status_flags = []
+            if data.get("underAvvikling"): status_flags.append("Under liquidation")
+            if data.get("konkurs"): status_flags.append("Bankrupt")
+            if data.get("underTvangsavviklingEllerTvangsopplosning"): status_flags.append("Under forced liquidation")
+            
+            profile.facts["company_status"] = create_fact(", ".join(status_flags) if status_flags else "Active")
+                
             return profile
             
         except httpx.RequestError:
