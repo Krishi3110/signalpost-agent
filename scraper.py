@@ -3,26 +3,22 @@ from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
-import json
 import os
 import asyncio
 from datetime import datetime, timezone
 from models import Fact, CompanyProfile
 
-# Define the exact extraction schema for the LLM
 class Executive(BaseModel):
     name: str
     title: str
 
-class WebsiteExtraction(BaseModel):
+class WebsiteFacts(BaseModel):
     mission_statement: str | None = None
     executive_team: list[Executive] = Field(default_factory=list)
-    contact_emails: list[str] = Field(default_factory=list)
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
-    """Scrapes the official website and extracts unstructured facts via Gemini."""
     if "website" not in profile.facts:
         return profile
         
@@ -33,6 +29,7 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
         try:
             response = await http_client.get(url, headers=headers)
             if response.status_code != 200:
+                print(f"Website fetch failed for {profile.orgnr}: {response.status_code}")
                 return profile
             
             soup = BeautifulSoup(response.text, "html.parser")
@@ -41,13 +38,7 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
                 
             text = soup.get_text(separator=' ', strip=True)[:3000]
             
-            prompt = f"""
-            Analyze the following text from a Norwegian company's website. 
-            Extract the mission statement, executive team, and contact emails.
-            Do NOT invent or guess information.
-            Text:
-            {text}
-            """
+            prompt = f"Extract the mission statement and executive team from this Norwegian company website text. Do NOT invent information.\nText: {text}"
             
             max_retries = 3
             for attempt in range(max_retries):
@@ -57,13 +48,12 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             response_mime_type="application/json",
-                            response_schema=WebsiteExtraction, # Enforces strict schema
+                            response_schema=WebsiteFacts,
                             temperature=0.0,
                         ),
                     )
                     
-                    # Safely parse the guaranteed JSON response back into our Pydantic model
-                    result = WebsiteExtraction.model_validate_json(res.text)
+                    result = WebsiteFacts.model_validate_json(res.text)
                     timestamp = datetime.now(timezone.utc)
                     
                     def create_fact(value) -> Fact:
@@ -76,9 +66,6 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
                         team_str = ", ".join([f"{ex.name} ({ex.title})" for ex in result.executive_team])
                         profile.facts["executive_team"] = create_fact(team_str)
                         
-                    if result.contact_emails:
-                        profile.facts["contact_emails"] = create_fact(", ".join(result.contact_emails))
-                        
                     break 
                     
                 except Exception as e:
@@ -86,11 +73,13 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
                         if attempt < max_retries - 1:
                             await asyncio.sleep(2 ** attempt)
                         else:
+                            print(f"LLM Rate limit exhausted for {profile.orgnr}")
                             break
                     else:
+                        print(f"LLM extraction error for {profile.orgnr}: {repr(e)}")
                         break
                         
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Website scraping error for {profile.orgnr}: {repr(e)}")
             
     return profile
