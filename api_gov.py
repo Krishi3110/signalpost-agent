@@ -1,5 +1,6 @@
 import httpx
 import asyncio
+import sys
 from datetime import datetime, timezone
 from models import Fact, CompanyProfile
 
@@ -13,7 +14,7 @@ async def fetch_brreg_basic_info(orgnr: str) -> CompanyProfile | None:
             try:
                 response = await client.get(url, headers=HEADERS)
                 if response.status_code != 200:
-                    if attempt == 2: print(f"Gov API failed for {orgnr}: {response.status_code}")
+                    if attempt == 2: print(f"Gov API failed for {orgnr}: {response.status_code}", file=sys.stderr)
                     await asyncio.sleep(2 ** attempt)
                     continue
                     
@@ -56,7 +57,7 @@ async def fetch_brreg_basic_info(orgnr: str) -> CompanyProfile | None:
                     
                 return profile
             except Exception as e:
-                if attempt == 2: print(f"Gov API error for {orgnr}: {repr(e)}")
+                if attempt == 2: print(f"Gov API error for {orgnr}: {repr(e)}", file=sys.stderr)
                 await asyncio.sleep(2 ** attempt)
         return None
 
@@ -67,7 +68,7 @@ async def fetch_brreg_financials(profile: CompanyProfile) -> CompanyProfile:
             try:
                 response = await client.get(url, headers=HEADERS)
                 if response.status_code != 200:
-                    if attempt == 2: print(f"Financial API failed for {profile.orgnr}: {response.status_code}")
+                    if attempt == 2: print(f"Financial API failed for {profile.orgnr}: {response.status_code}", file=sys.stderr)
                     await asyncio.sleep(2 ** attempt)
                     continue
                     
@@ -107,7 +108,7 @@ async def fetch_brreg_financials(profile: CompanyProfile) -> CompanyProfile:
                 break # Success, exit retry loop
                     
             except Exception as e:
-                if attempt == 2: print(f"Financial parsing error for {profile.orgnr}: {repr(e)}")
+                if attempt == 2: print(f"Financial parsing error for {profile.orgnr}: {repr(e)}", file=sys.stderr)
                 await asyncio.sleep(2 ** attempt)
                 
     return profile
@@ -128,7 +129,7 @@ async def fetch_brreg_roles(profile: CompanyProfile) -> CompanyProfile:
                 if response.status_code == 404:
                     return profile # No roles endpoint or no roles found
                 if response.status_code != 200:
-                    if attempt == 2: print(f"Roles API failed for {profile.orgnr}: {response.status_code}")
+                    if attempt == 2: print(f"Roles API failed for {profile.orgnr}: {response.status_code}", file=sys.stderr)
                     await asyncio.sleep(2 ** attempt)
                     continue
                     
@@ -138,7 +139,7 @@ async def fetch_brreg_roles(profile: CompanyProfile) -> CompanyProfile:
                 # Check for "rollegrupper" (newer BRREG format returns a dict with it, older is a list directly)
                 rollegrupper = data.get("rollegrupper", []) if isinstance(data, dict) else data
                 if not isinstance(rollegrupper, list):
-                    print(f"Unexpected rollegrupper format for {profile.orgnr}")
+                    print(f"Unexpected rollegrupper format for {profile.orgnr}", file=sys.stderr)
                     return profile
                     
                 role_entries = []
@@ -183,8 +184,8 @@ async def fetch_brreg_roles(profile: CompanyProfile) -> CompanyProfile:
                                 entity_name = entity.get("navn")
                                 if isinstance(entity_name, list):
                                     entity_name = " ".join(str(x).strip() for x in entity_name if x)
-                                elif isinstance(entity_name, str):
-                                    entity_name = entity_name.strip()
+                                else:
+                                    if isinstance(entity_name, str): entity_name = entity_name.strip()
                                 if entity_name: name = entity_name
                                 
                         # ADMINISTRATOR ROLE
@@ -206,7 +207,7 @@ async def fetch_brreg_roles(profile: CompanyProfile) -> CompanyProfile:
                     )
                 break
             except Exception as e:
-                if attempt == 2: print(f"Roles parsing error for {profile.orgnr}: {repr(e)}")
+                if attempt == 2: print(f"Roles parsing error for {profile.orgnr}: {repr(e)}", file=sys.stderr)
                 await asyncio.sleep(2 ** attempt)
                 
     return profile

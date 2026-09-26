@@ -15,3 +15,20 @@ class CompanyProfile(BaseModel):
     
     # All other facts are stored here, ensuring they follow the Fact schema
     facts: Dict[str, Fact] = Field(default_factory=dict)
+
+from enum import Enum
+
+class ResultState(str, Enum):
+    AVAILABLE = "available"
+    NOT_AVAILABLE = "not_available"
+    BLOCKED = "blocked"
+    NOT_APPLICABLE = "not_applicable"
+    AMBIGUOUS = "ambiguous"
+    FAILED = "failed"
+
+class ResultEnvelope(BaseModel):
+    """The required output envelope for the evaluator run."""
+    orgnr: str
+    state: ResultState
+    profile: CompanyProfile | None = None
+    error_details: str | None = None
