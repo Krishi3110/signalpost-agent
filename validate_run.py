@@ -40,6 +40,16 @@ def validate(input_file, output_file, stdout_file):
         print("✅ SUCCESS: Stdout line count matches exactly.")
 
     # 2. JSON & Envelope Validation
+    # Need to load the model dynamically if validate_run is run externally,
+    # but we can just import it here assuming it's in the same directory.
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        from models import ResultEnvelope
+    except ImportError:
+        print("❌ FAILED: Could not import ResultEnvelope from models.py for strict validation.")
+        return
+        
     allowed_states = {"available", "not_available", "blocked", "not_applicable", "ambiguous", "failed"}
     output_orgs = []
     
@@ -49,15 +59,15 @@ def validate(input_file, output_file, stdout_file):
     
     for i, line in enumerate(stdout_lines):
         try:
-            data = json.loads(line)
-            if 'orgnr' not in data or 'state' not in data:
-                invalid_schema += 1
-                continue
-            output_orgs.append(data['orgnr'])
-            if data['state'] not in allowed_states:
+            # 1. Parse JSON and instantiate strict Pydantic envelope
+            envelope = ResultEnvelope.model_validate_json(line)
+            output_orgs.append(envelope.orgnr)
+            if envelope.state.value not in allowed_states:
                 invalid_state += 1
         except json.JSONDecodeError:
             malformed_json += 1
+        except Exception:
+            invalid_schema += 1
             
     if malformed_json > 0:
         print(f"❌ FAILED: {malformed_json} lines are not valid JSON.")
@@ -65,9 +75,9 @@ def validate(input_file, output_file, stdout_file):
         print("✅ SUCCESS: Every stdout line is valid JSON.")
         
     if invalid_schema > 0:
-        print(f"❌ FAILED: {invalid_schema} lines are missing 'orgnr' or 'state'.")
+        print(f"❌ FAILED: {invalid_schema} lines failed ResultEnvelope Pydantic validation.")
     else:
-        print("✅ SUCCESS: Every stdout line fits the ResultEnvelope schema.")
+        print("✅ SUCCESS: Every stdout line perfectly instantiates a ResultEnvelope object.")
         
     if invalid_state > 0:
         print(f"❌ FAILED: {invalid_state} lines have an invalid state.")
@@ -88,7 +98,7 @@ def validate(input_file, output_file, stdout_file):
         if missing_orgs: print(f"   Missing: {list(missing_orgs)[:5]}...")
         if extra_orgs: print(f"   Extra: {list(extra_orgs)[:5]}...")
     else:
-        print("✅ SUCCESS: Output organization numbers perfectly match the 100 inputs.")
+        print(f"✅ SUCCESS: Output organization numbers perfectly match the {len(inputs)} inputs.")
         
     if output_orgs != inputs:
         print("❌ FAILED: Output ordering does not perfectly match input ordering.")

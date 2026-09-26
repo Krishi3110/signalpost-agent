@@ -16,8 +16,14 @@ async def process_company(orgnr: str) -> ResultEnvelope:
         
         profile = await fetch_brreg_financials(profile)
         profile = await fetch_brreg_roles(profile)
-        profile = await scrape_company_website(profile) 
+        profile, web_status = await scrape_company_website(profile) 
         
+        if web_status == "BLOCKED":
+            return ResultEnvelope(orgnr=orgnr, state=ResultState.BLOCKED, profile=profile, error_details="Website access blocked")
+            
+        # Check if we have actually found useful evidence.
+        # profile.facts ALWAYS has org_form, registration_date, business_address if BRREG basic info succeeded.
+        # So we definitely have *some* usable evidence if it reached here.
         return ResultEnvelope(orgnr=orgnr, state=ResultState.AVAILABLE, profile=profile)
         
     except Exception as e:

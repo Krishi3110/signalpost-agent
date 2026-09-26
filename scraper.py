@@ -126,9 +126,9 @@ def score_link(href, text, title, aria):
         return max_score - (len(href) / 1000.0)
     return 0
 
-async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
+async def scrape_company_website(profile: CompanyProfile) -> tuple[CompanyProfile, str]:
     if "website" not in profile.facts:
-        return profile
+        return profile, "OK"
         
     url = profile.facts["website"].value
     base_domain = urlparse(url).netloc.lower()
@@ -136,10 +136,19 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
     
     async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as http_client:
         try:
+            # We want to catch specific HTTP errors early for BLOCKED status
+            try:
+                response = await http_client.get(url, headers=headers)
+                if response.status_code in (403, 401, 429):
+                    return profile, "BLOCKED"
+            except Exception:
+                pass # Let fetch_page attempt normal/Playwright fallback
+                
             soup = await fetch_page(http_client, url, headers)
             if not soup:
                 print(f"Website fetch failed for {profile.orgnr}", file=sys.stderr)
-                return profile
+                # If tier 3 failed too, maybe it's completely unreachable
+                return profile, "FAILED"
             
             scored_links = []
             for a in soup.find_all('a', href=True):
@@ -273,15 +282,16 @@ async def scrape_company_website(profile: CompanyProfile) -> CompanyProfile:
                             await asyncio.sleep(wait_time)
                         else:
                             print(f"LLM Rate limit exhausted for {profile.orgnr}", file=sys.stderr)
-                            break
+                            return profile, "FAILED"
                     else:
                         print(f"LLM extraction error for {profile.orgnr}: {repr(e)}", file=sys.stderr)
                         if attempt < max_retries - 1 and LLM_BACKEND == "ollama":
                             await asyncio.sleep(2)
                             continue
-                        break
+                        return profile, "FAILED"
                         
         except Exception as e:
             print(f"Website scraping error for {profile.orgnr}: {repr(e)}", file=sys.stderr)
+            return profile, "FAILED"
             
-    return profile
+    return profile, "OK"
