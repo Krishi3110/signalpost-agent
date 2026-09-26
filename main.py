@@ -2,6 +2,7 @@ import asyncio
 import argparse
 import json
 import sys
+import io
 from api_gov import fetch_brreg_basic_info, fetch_brreg_financials, fetch_brreg_roles
 from scraper import scrape_company_website
 from models import ResultEnvelope, ResultState
@@ -29,6 +30,9 @@ async def process_company(orgnr: str) -> ResultEnvelope:
         return ResultEnvelope(orgnr=orgnr, state=ResultState.FAILED, error_details=f"Unexpected execution failure: {str(e)}")
 
 async def main():
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding='utf-8')
+        
     parser = argparse.ArgumentParser(description="Signalpost Agent")
     parser.add_argument("--input", required=True, help="Input JSON file with org numbers")
     parser.add_argument("--output", required=True, help="Output JSONL file path")
