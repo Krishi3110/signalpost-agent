@@ -20,10 +20,13 @@ async def process_company(orgnr: str) -> ResultEnvelope:
         
         if web_status == "BLOCKED":
             return ResultEnvelope(orgnr=orgnr, state=ResultState.BLOCKED, profile=profile, error_details="Website access blocked")
+        elif web_status == "FAILED":
+            return ResultEnvelope(orgnr=orgnr, state=ResultState.FAILED, profile=profile, error_details="Website scraping execution failed")
             
         # Check if we have actually found useful evidence.
-        # profile.facts ALWAYS has org_form, registration_date, business_address if BRREG basic info succeeded.
-        # So we definitely have *some* usable evidence if it reached here.
+        if len(profile.facts) <= 1: # Only has company_name or similar baseline
+            return ResultEnvelope(orgnr=orgnr, state=ResultState.NOT_AVAILABLE, profile=profile, error_details="No usable facts found")
+            
         return ResultEnvelope(orgnr=orgnr, state=ResultState.AVAILABLE, profile=profile)
         
     except Exception as e:

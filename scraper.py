@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 import os
 import asyncio
 from datetime import datetime, timezone
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, urlunparse
 from models import Fact, CompanyProfile
 import ollama
 
@@ -126,6 +126,21 @@ def score_link(href, text, title, aria):
         return max_score - (len(href) / 1000.0)
     return 0
 
+def canonicalize_url(u: str) -> str:
+    parsed = urlparse(u)
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc.lower()
+    if scheme == "http" and netloc.endswith(":80"):
+        netloc = netloc[:-3]
+    elif scheme == "https" and netloc.endswith(":443"):
+        netloc = netloc[:-4]
+    path = parsed.path
+    if path == "" or path == "/":
+        path = ""
+    else:
+        path = path.rstrip("/")
+    return urlunparse((scheme, netloc, path, parsed.params, parsed.query, ""))
+
 async def scrape_company_website(profile: CompanyProfile) -> tuple[CompanyProfile, str]:
     if "website" not in profile.facts:
         return profile, "OK"
@@ -201,21 +216,6 @@ async def scrape_company_website(profile: CompanyProfile) -> tuple[CompanyProfil
             combined_text = "\n\n".join(texts)
             allowed_urls = {url} | set(links_to_fetch)
             
-            def canonicalize_url(u: str) -> str:
-                parsed = urlparse(u)
-                scheme = parsed.scheme.lower()
-                netloc = parsed.netloc.lower()
-                if scheme == "http" and netloc.endswith(":80"):
-                    netloc = netloc[:-3]
-                elif scheme == "https" and netloc.endswith(":443"):
-                    netloc = netloc[:-4]
-                path = parsed.path
-                if path == "" or path == "/":
-                    path = ""
-                else:
-                    path = path.rstrip("/")
-                return urlunparse((scheme, netloc, path, parsed.params, parsed.query, ""))
-
             canonical_map = {canonicalize_url(u): u for u in allowed_urls}
             
             prompt = f"""
