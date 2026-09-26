@@ -10,7 +10,6 @@ import asyncio
 from datetime import datetime, timezone
 from urllib.parse import urlparse, urljoin, urlunparse
 from models import Fact, CompanyProfile
-import ollama
 
 LLM_BACKEND = os.getenv("LLM_BACKEND", "gemini") # Options: "ollama" or "gemini"
 OLLAMA_MODEL = "qwen3:14b"
@@ -248,6 +247,7 @@ async def scrape_company_website(profile: CompanyProfile) -> tuple[CompanyProfil
                 try:
                     res_text = ""
                     if LLM_BACKEND == "ollama":
+                        import ollama
                         ollama_client = ollama.AsyncClient()
                         response = await ollama_client.chat(
                             model=OLLAMA_MODEL,
