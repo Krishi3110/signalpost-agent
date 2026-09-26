@@ -201,6 +201,23 @@ async def scrape_company_website(profile: CompanyProfile) -> tuple[CompanyProfil
             combined_text = "\n\n".join(texts)
             allowed_urls = {url} | set(links_to_fetch)
             
+            def canonicalize_url(u: str) -> str:
+                parsed = urlparse(u)
+                scheme = parsed.scheme.lower()
+                netloc = parsed.netloc.lower()
+                if scheme == "http" and netloc.endswith(":80"):
+                    netloc = netloc[:-3]
+                elif scheme == "https" and netloc.endswith(":443"):
+                    netloc = netloc[:-4]
+                path = parsed.path
+                if path == "" or path == "/":
+                    path = ""
+                else:
+                    path = path.rstrip("/")
+                return urlunparse((scheme, netloc, path, parsed.params, parsed.query, ""))
+
+            canonical_map = {canonicalize_url(u): u for u in allowed_urls}
+            
             prompt = f"""
             You are extracting factual information from a company's public website.
             
@@ -255,20 +272,20 @@ async def scrape_company_website(profile: CompanyProfile) -> tuple[CompanyProfil
                     timestamp = datetime.now(timezone.utc)
                     
                     if result.mission_statement and result.mission_statement.value:
-                        src_url = result.mission_statement.source_url
-                        if src_url in allowed_urls:
+                        canonical_src = canonicalize_url(result.mission_statement.source_url)
+                        if canonical_src in canonical_map:
                             profile.facts["mission_statement"] = Fact(
                                 value=result.mission_statement.value,
-                                source_url=src_url,
+                                source_url=canonical_map[canonical_src],
                                 fetched_at=timestamp
                             )
                         
                     if result.company_description and result.company_description.value:
-                        src_url = result.company_description.source_url
-                        if src_url in allowed_urls:
+                        canonical_src = canonicalize_url(result.company_description.source_url)
+                        if canonical_src in canonical_map:
                             profile.facts["company_description"] = Fact(
                                 value=result.company_description.value,
-                                source_url=src_url,
+                                source_url=canonical_map[canonical_src],
                                 fetched_at=timestamp
                             )
                         
